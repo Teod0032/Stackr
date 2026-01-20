@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stackr</title>
+    
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0F1333">
+    
+    <link rel="manifest" id="my-manifest">
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        body { background-color: #0F1333; color: white; -webkit-tap-highlight-color: transparent; user-select: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Smooth transitions for Modal and Toast */
+        .fade-enter { opacity: 0; transform: translateY(20px); }
+        .fade-enter-active { opacity: 1; transform: translateY(0); transition: opacity 300ms, transform 300ms; }
+        .fade-exit { opacity: 1; }
+        .fade-exit-active { opacity: 0; transition: opacity 300ms; }
+
+        input:focus { outline: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script>
+        const manifest = {
+            "name": "Stackr",
+            "short_name": "Stackr",
+            "start_url": ".",
+            "display": "standalone",
+            "background_color": "#0F1333",
+            "theme_color": "#0F1333",
+            "icons": [{ 
+                "src": "https://cdn-icons-png.flaticon.com/512/2554/2554037.png", 
+                "sizes": "512x512", 
+                "type": "image/png" 
+            }]
+        };
+        const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+        document.getElementById('my-manifest').setAttribute('href', URL.createObjectURL(blob));
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+        
+        // --- CONSTANTS ---
+        const COLORS = {
+            background: '#0F1333', cardBgLeft: '#E6E6E6', cardBgRight: '#D1D1D1',
+            accent: '#F28C42', textDark: '#111534', textLight: '#FFFFFF',
+            inputBg: '#2A2E4D', menuBg: '#1A1F4B', danger: '#FF4444', selectorBg: '#E0E0E0',     
+        };
+
+        const WORKOUT_COLORS = ['#F28C42', '#FF5C8D', '#9B5CFF', '#42D4F2', '#5CFF87', '#FFD65C'];
+        const STORAGE_KEY = '@stackr_workouts_v1';
+        
+        // Geometry for the slanted card
+        const SCREEN_WIDTH = Math.min(window.innerWidth, 500); // Cap width for desktop view
+        const CARD_MARGIN = 20;
+        const CARD_WIDTH = SCREEN_WIDTH - (CARD_MARGIN * 2);
+        const CARD_HEIGHT = 90;
+        const SPLIT_PCT = 0.55; 
+        const SLANT = 30;       
+        const GAP_WIDTH = 8;    
+
+        const INITIAL_WORKOUTS = [
+            { id: 'w1', title: "Push Day", color: '#F28C42', exercises: [ { id: 'e1', name: 'Bench Press', weight: '50', reps: '10', minReps: 8, maxReps: 12, isExpanded: false }, { id: 'e2', name: 'Incline Dumbbell', weight: '24', reps: '8', minReps: 10, maxReps: 15, isExpanded: false } ] },
+            { id: 'w2', title: "Pull Day", color: '#42D4F2', exercises: [{ id: 'e5', name: 'Deadlift', weight: '140', reps: '5', minReps: 5, maxReps: 8, isExpanded: false }] }
+        ];
+
+        // --- HELPERS ---
+        const Icon = ({ name, size = 24, color = "currentColor", ...props }) => {
+            useEffect(() => { if(window.lucide) window.lucide.createIcons(); }, [name]);
+            return <i data-lucide={name} style={{ width: size, height: size, color: color }} {...props}></i>;
+        };
+
+        const vibrate = (pattern = 10) => {
+            if (navigator.vibrate) navigator.vibrate(pattern);
+        };
+
+        // Long Press Hook
+        const useLongPress = (callback = () => {}, ms = 500) => {
+            const [startLongPress, setStartLongPress] = useState(false);
+            useEffect(() => {
+                let timerId;
+                if (startLongPress) {
+                    timerId = setTimeout(() => {
+                        vibrate(50);
+                        callback();
+                    }, ms);
+                } else {
+                    clearTimeout(timerId);
+                }
+                return () => clearTimeout(timerId);
+            }, [startLongPress]);
+
+            return {
+                onMouseDown: () => setStartLongPress(true),
+                onMouseUp: () => setStartLongPress(false),
+                onMouseLeave: () => setStartLongPress(false),
+                onTouchStart: () => setStartLongPress(true),
+                onTouchEnd: () => setStartLongPress(false),
+            };
+        };
+
+        // --- COMPONENTS ---
+
+        const RepRangeSelector = ({ min, max, onRangeChange, color }) => {
+            const numbers = [4, 5, 6, 7, 8, 9, 10, 11, 12];
+            const numCount = numbers.length;
+            const stepWidthPct = 100 / numCount; 
+            const startIndex = min - 4;
+            const endIndex = max - 4;
+            const barLeftPosPct = (startIndex * stepWidthPct) + (stepWidthPct / 2);
+            const barRightPosPct = 100 - ((endIndex * stepWidthPct) + (stepWidthPct / 2));
+
+            const handlePress = (num) => {
+                vibrate(10);
+                if (min !== max) { onRangeChange(num, num); } 
+                else { if (num < min) onRangeChange(num, max); else onRangeChange(min, num); }
+            };
+
+            return (
+                <div className="relative h-[50px] w-full bg-[#E0E0E0] rounded-[30px] flex items-center justify-center overflow-hidden">
+                    {/* Range Bar */}
+                    {min !== max && (
+                        <div style={{
+                            position: 'absolute', height: '20px', backgroundColor: color, opacity: 0.5,
+                            left: `${barLeftPosPct}%`, right: `${barRightPosPct}%`, zIndex: 0
+                        }}></div>
+                    )}
+                    
+                    <div className="flex w-full h-full z-10">
+                        {numbers.map((num) => {
+                            const isMin = num === min;
+                            const isMax = num === max;
+                            const isInRange = num > min && num < max;
+                            const isActive = isMin || isMax || isInRange;
+                            
+                            return (
+                                <div key={num} onClick={() => handlePress(num)} className="flex-1 h-full flex items-center justify-center relative cursor-pointer">
+                                    {(isMin || isMax) && (
+                                        <div style={{
+                                            position: 'absolute', width: '40px', height: '40px', backgroundColor: color, borderRadius: '50%', zIndex: -1
+                                        }}></div>
+                                    )}
+                                    <span style={{ 
+                                        color: (isMin || isMax) ? '#FFF' : (isInRange ? '#111534' : '#888'), 
+                                        fontWeight: isActive ? 'bold' : 'normal',
+                                        fontSize: '16px'
+                                    }}>{num}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
+        const ExerciseCard = ({ data, activeColor, onEdit, onToggle, onUpdateStats }) => {
+            const longPressProps = useLongPress(() => onEdit(data));
+            
+            // SVG Path Logic
+            const topSplitX = CARD_WIDTH * SPLIT_PCT;
+            const bottomSplitX = topSplitX + SLANT; 
+            const leftPath = `M 0 0 L ${topSplitX} 0 L ${bottomSplitX} ${CARD_HEIGHT} L 0 ${CARD_HEIGHT} Z`;
+            const rightPath = `M ${topSplitX + GAP_WIDTH} 0 L ${CARD_WIDTH} 0 L ${CARD_WIDTH} ${CARD_HEIGHT} L ${bottomSplitX + GAP_WIDTH} ${CARD_HEIGHT} Z`;
+
+            return (
+                <div className="relative mb-[35px] mx-auto" style={{ width: CARD_WIDTH }}>
+                    {/* Main Card */}
+                    <div className="relative h-[90px] rounded-[20px] overflow-hidden shadow-lg">
+                        <svg width={CARD_WIDTH} height={CARD_HEIGHT} className="absolute inset-0">
+                            <path d={leftPath} fill={COLORS.cardBgLeft} />
+                            <path d={rightPath} fill={COLORS.cardBgRight} />
+                        </svg>
+                        
+                        <div className="absolute inset-0 flex">
+                            {/* Left Side (Name) */}
+                            <div {...longPressProps} className="w-[55%] h-full flex items-center pl-[25px] cursor-pointer active:opacity-80">
+                                <span className="text-[#111534] text-[20px] font-bold truncate pr-2">{data.name}</span>
+                            </div>
+                            
+                            {/* Right Side (Weight) */}
+                            <div onClick={() => onToggle(data.id)} className="w-[45%] h-full flex flex-col items-center justify-center pl-[5px] cursor-pointer active:opacity-80">
+                                <span className="text-[#111534] text-[36px] font-bold leading-none">{data.weight}</span>
+                                <span className="text-[#111534] text-[16px] font-bold">Kg</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Reps Badge */}
+                    <div className="absolute -top-[20px] -right-[6px] w-[55px] h-[55px] rounded-full flex items-center justify-center border-4 border-[#0F1333] z-20 shadow-sm"
+                         style={{ backgroundColor: activeColor }}>
+                        <span className="text-white text-[20px] font-bold">{data.reps}</span>
+                    </div>
+
+                    {/* Expanded Menu */}
+                    {data.isExpanded && (
+                        <div className="mt-[15px] bg-[#1A1F4B] rounded-[20px] p-[15px] flex gap-[10px] animate-slide-down">
+                            <button onClick={() => onUpdateStats(data.id, 'reps', 1)} className="flex-1 bg-[#2A2E4D] py-3 px-4 rounded-[15px] flex justify-between items-center active:scale-95 transition-transform">
+                                <span className="text-white font-bold text-[16px]">1 Rep</span>
+                                <Icon name="plus" size={20} color="white" />
+                            </button>
+                            <button onClick={() => onUpdateStats(data.id, 'weight', 2.5)} className="flex-1 py-3 px-4 rounded-[15px] flex justify-between items-center active:scale-95 transition-transform"
+                                    style={{ backgroundColor: activeColor }}>
+                                <span className="text-[#111534] font-bold text-[16px]">2,5 Kg</span>
+                                <Icon name="plus" size={20} color="#111534" />
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+
+        const App = () => {
+            const [workouts, setWorkouts] = useState(INITIAL_WORKOUTS);
+            const [currentWorkoutIndex, setCurrentWorkoutIndex] = useState(0);
+            const [isLoaded, setIsLoaded] = useState(false);
+            const [showToast, setShowToast] = useState(false);
+
+            // Modal State
+            const [modalVisible, setModalVisible] = useState(false);
+            const [modalMode, setModalMode] = useState('exercise'); // exercise, edit-workout, create-workout
+            const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+            
+            // Form State
+            const [newExercise, setNewExercise] = useState({ name: '', weight: '', reps: '', minReps: 8, maxReps: 12 });
+            const [workoutTitle, setWorkoutTitle] = useState('');
+            const [workoutColor, setWorkoutColor] = useState(WORKOUT_COLORS[0]);
+            const [editingId, setEditingId] = useState(null);
+
+            const activeWorkout = workouts[currentWorkoutIndex] || workouts[0];
+            const isLastWorkout = currentWorkoutIndex === workouts.length - 1;
+            const isFirstWorkout = currentWorkoutIndex === 0;
+
+            // Load
+            useEffect(() => {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) setWorkouts(JSON.parse(saved));
+                setIsLoaded(true);
+            }, []);
+
+            // Save
+            useEffect(() => {
+                if (isLoaded) {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(workouts));
+                    setShowToast(true);
+                    const timer = setTimeout(() => setShowToast(false), 1500);
+                    return () => clearTimeout(timer);
+                }
+            }, [workouts, isLoaded]);
+
+            // Handlers
+            const handleNav = (dir) => {
+                vibrate(10);
+                if (dir === 1) {
+                    if (isLastWorkout) {
+                        // Create New
+                        setModalMode('create-workout'); setWorkoutTitle(''); setWorkoutColor(WORKOUT_COLORS[0]); setShowDeleteConfirm(false); setModalVisible(true);
+                    } else setCurrentWorkoutIndex(i => i + 1);
+                } else {
+                    if (!isFirstWorkout) setCurrentWorkoutIndex(i => i - 1);
+                }
+            };
+
+            const openAddModal = () => {
+                vibrate(10);
+                setModalMode('exercise'); setWorkoutColor(activeWorkout.color); setNewExercise({ name: '', weight: '', reps: '', minReps: 8, maxReps: 12 }); setEditingId(null); setShowDeleteConfirm(false); setModalVisible(true);
+            };
+
+            const openEditModal = (exercise) => {
+                vibrate(10);
+                setModalMode('exercise'); setWorkoutColor(activeWorkout.color);
+                setNewExercise({ name: exercise.name, weight: exercise.weight, reps: exercise.reps, minReps: exercise.minReps, maxReps: exercise.maxReps });
+                setEditingId(exercise.id); setShowDeleteConfirm(false); setModalVisible(true);
+            };
+
+            // Custom long press for header
+            const headerLongPress = useLongPress(() => {
+                vibrate(20);
+                setModalMode('edit-workout'); setWorkoutTitle(activeWorkout.title); setWorkoutColor(activeWorkout.color); setShowDeleteConfirm(false); setModalVisible(true);
+            });
+
+            const handleSave = () => {
+                const updated = [...workouts];
+                const current = updated[currentWorkoutIndex];
+
+                if (modalMode === 'create-workout') {
+                    if (!workoutTitle.trim()) return;
+                    const newW = { id: Math.random().toString(), title: workoutTitle, color: workoutColor, exercises: [] };
+                    setWorkouts([...workouts, newW]); setCurrentWorkoutIndex(workouts.length);
+                } else if (modalMode === 'edit-workout') {
+                    if (!workoutTitle.trim()) return;
+                    current.title = workoutTitle; current.color = workoutColor;
+                    setWorkouts(updated);
+                } else {
+                    if (!newExercise.name) return;
+                    const exData = { name: newExercise.name, weight: newExercise.weight || '0', reps: newExercise.reps || '0', minReps: newExercise.minReps, maxReps: newExercise.maxReps };
+                    if (editingId) {
+                        current.exercises = current.exercises.map(ex => ex.id === editingId ? { ...ex, ...exData } : ex);
+                    } else {
+                        current.exercises.push({ id: Math.random().toString(), ...exData, isExpanded: false });
+                    }
+                    setWorkouts(updated);
+                }
+                setModalVisible(false);
+            };
+
+            const performDelete = () => {
+                if (modalMode === 'edit-workout') {
+                    if (workouts.length <= 1) return setShowDeleteConfirm(false);
+                    const filtered = workouts.filter(w => w.id !== activeWorkout.id);
+                    setWorkouts(filtered); setCurrentWorkoutIndex(Math.min(currentWorkoutIndex, filtered.length - 1));
+                } else if (editingId) {
+                    const updated = [...workouts];
+                    updated[currentWorkoutIndex].exercises = updated[currentWorkoutIndex].exercises.filter(ex => ex.id !== editingId);
+                    setWorkouts(updated);
+                }
+                setModalVisible(false);
+            };
+
+            const toggleExpand = (id) => {
+                vibrate(5);
+                setWorkouts(workouts.map((w, i) => i === currentWorkoutIndex ? { ...w, exercises: w.exercises.map(e => ({ ...e, isExpanded: e.id === id ? !e.isExpanded : e.isExpanded })) } : w));
+            };
+
+            const updateStats = (id, type, inc) => {
+                vibrate(10);
+                setWorkouts(workouts.map((w, i) => i === currentWorkoutIndex ? {
+                    ...w, exercises: w.exercises.map(e => {
+                        if (e.id !== id) return e;
+                        const val = parseFloat(type === 'weight' ? e.weight : e.reps) || 0;
+                        const newVal = val + inc;
+                        const fmt = Number.isInteger(newVal) ? newVal.toString() : newVal.toFixed(1);
+                        return type === 'weight' ? { ...e, weight: fmt, reps: e.minReps.toString() } : { ...e, reps: fmt };
+                    })
+                } : w));
+            };
+
+            return (
+                <div className="flex flex-col h-screen max-w-[500px] mx-auto relative overflow-hidden">
+                    
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-5 py-8 pt-10">
+                        <button onClick={() => handleNav(-1)} className="w-10 h-10 rounded-full flex items-center justify-center transition-opacity active:opacity-50"
+                                style={{ opacity: isFirstWorkout ? 0 : 1, backgroundColor: activeWorkout.color }}>
+                            <Icon name="chevron-left" size={20} color="white" className="mr-0.5" />
+                        </button>
+
+                        <div {...headerLongPress} className="py-3 px-8 rounded-full min-w-[180px] flex items-center justify-center cursor-pointer select-none active:scale-95 transition-transform shadow-md"
+                             style={{ backgroundColor: activeWorkout.color }}>
+                            <span className="text-white font-bold text-[17px]">{activeWorkout.title}</span>
+                        </div>
+
+                        <button onClick={() => handleNav(1)} className="w-10 h-10 rounded-full flex items-center justify-center active:opacity-50"
+                                style={{ backgroundColor: activeWorkout.color }}>
+                            <Icon name={isLastWorkout ? "plus" : "chevron-right"} size={isLastWorkout ? 24 : 20} color="white" className={isLastWorkout ? "" : "ml-0.5"} />
+                        </button>
+                    </div>
+
+                    {/* Content */}
+                    <div className="flex-1 overflow-y-auto pb-32 pt-5 no-scrollbar px-5">
+                        {activeWorkout.exercises.map(ex => (
+                            <ExerciseCard key={ex.id} data={ex} activeColor={activeWorkout.color} onEdit={openEditModal} onToggle={toggleExpand} onUpdateStats={updateStats} />
+                        ))}
+                        {activeWorkout.exercises.length === 0 && (
+                            <div className="text-gray-500 text-center mt-20 italic">No exercises yet. Tap + to add one.</div>
+                        )}
+                    </div>
+
+                    {/* Toast */}
+                    <div className={`absolute bottom-32 left-1/2 transform -translate-x-1/2 bg-white/20 px-5 py-2 rounded-full backdrop-blur-sm pointer-events-none transition-opacity duration-500 ${showToast ? 'opacity-100' : 'opacity-0'}`}>
+                        <span className="text-white font-bold">Saved</span>
+                    </div>
+
+                    {/* FAB */}
+                    <button onClick={openAddModal} className="absolute right-6 bottom-10 w-[70px] h-[70px] rounded-full flex items-center justify-center shadow-xl active:scale-90 transition-transform z-30"
+                            style={{ backgroundColor: activeWorkout.color }}>
+                        <Icon name="plus" size={40} color="white" />
+                    </button>
+
+                    {/* Modal Overlay */}
+                    {modalVisible && (
+                        <div className="fixed inset-0 bg-black/80 z-50 flex items-end justify-center animate-fade-in">
+                            <div className="w-full max-w-[500px] bg-[#0F1333] rounded-t-[30px] p-[30px] pb-12 animate-slide-up border-t border-white/10">
+                                
+                                {showDeleteConfirm ? (
+                                    <div className="flex flex-col items-center py-4">
+                                        <Icon name="alert-triangle" size={50} color="#FF4444" className="mb-4" />
+                                        <h2 className="text-white text-2xl font-bold mb-2">Are you sure?</h2>
+                                        <p className="text-gray-400 mb-8">This will permanently remove it.</p>
+                                        <div className="flex gap-4 w-full">
+                                            <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 p-4 rounded-xl border border-white font-bold text-white">Cancel</button>
+                                            <button onClick={performDelete} className="flex-1 p-4 rounded-xl bg-[#FF4444] font-bold text-white">Delete</button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="flex justify-between items-center mb-6">
+                                            {(editingId || modalMode === 'edit-workout') ? (
+                                                <button onClick={() => setShowDeleteConfirm(true)}><Icon name="trash-2" color="#FF4444" /></button>
+                                            ) : <div className="w-6"></div>}
+                                            <h2 className="text-white text-[22px] font-bold">
+                                                {modalMode === 'create-workout' ? 'New Workout' : modalMode === 'edit-workout' ? 'Rename Workout' : editingId ? 'Edit Exercise' : 'Add Exercise'}
+                                            </h2>
+                                            <div className="w-6"></div>
+                                        </div>
+
+                                        {(modalMode === 'create-workout' || modalMode === 'edit-workout') ? (
+                                            <>
+                                                <input className="w-full bg-[#2A2E4D] text-white p-4 rounded-xl mb-4 text-lg" placeholder="Workout Name" value={workoutTitle} onChange={e => setWorkoutTitle(e.target.value)} autoFocus />
+                                                <div className="mb-6">
+                                                    <div className="text-gray-400 text-sm font-bold mb-2">Theme Color</div>
+                                                    <div className="flex justify-between">
+                                                        {WORKOUT_COLORS.map(c => (
+                                                            <button key={c} onClick={() => setWorkoutColor(c)} className={`w-10 h-10 rounded-full transition-transform ${workoutColor === c ? 'scale-110 border-2 border-white' : ''}`} style={{ backgroundColor: c }} />
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <input className="w-full bg-[#2A2E4D] text-white p-4 rounded-xl mb-4 text-lg" placeholder="Exercise Name" value={newExercise.name} onChange={e => setNewExercise({...newExercise, name: e.target.value})} />
+                                                <div className="flex gap-4 mb-4">
+                                                    <input className="flex-1 bg-[#2A2E4D] text-white p-4 rounded-xl text-lg" type="number" placeholder="Weight" value={newExercise.weight} onChange={e => setNewExercise({...newExercise, weight: e.target.value})} />
+                                                    <input className="flex-1 bg-[#2A2E4D] text-white p-4 rounded-xl text-lg" type="number" placeholder="Reps" value={newExercise.reps} onChange={e => setNewExercise({...newExercise, reps: e.target.value})} />
+                                                </div>
+                                                <div className="text-gray-400 text-sm font-bold mb-2">Target Range: {newExercise.minReps} - {newExercise.maxReps}</div>
+                                                <RepRangeSelector min={newExercise.minReps} max={newExercise.maxReps} color={workoutColor} onRangeChange={(min, max) => setNewExercise({ ...newExercise, minReps: min, maxReps: max })} />
+                                            </>
+                                        )}
+
+                                        <div className="flex gap-4 mt-8">
+                                            <button onClick={() => setModalVisible(false)} className="flex-1 p-4 rounded-xl border font-bold" style={{ borderColor: workoutColor, color: workoutColor }}>Cancel</button>
+                                            <button onClick={handleSave} className="flex-1 p-4 rounded-xl font-bold text-[#111534]" style={{ backgroundColor: workoutColor }}>Save</button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
