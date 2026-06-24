@@ -18,7 +18,8 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     
     <style>
         body { 
@@ -33,7 +34,6 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         input:focus { outline: none; }
         
-        /* Custom animations */
         @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -47,17 +47,20 @@
     <div id="root"></div>
 
     <script>
+        // FIXED: Generating an absolute base URL so the browser doesn't reject the blob's relative paths.
+        const baseUrl = new URL('.', window.location.href).href;
+        
         const manifest = {
             "name": "Stackr",
             "short_name": "Stackr",
-            "start_url": ".",
+            "start_url": baseUrl,
             "display": "standalone",
             "background_color": "#0F1333",
             "theme_color": "#0F1333",
             "orientation": "portrait",
             "icons": [
-                { "src": "./icon.png", "sizes": "192x192", "type": "image/png" },
-                { "src": "./icon.png", "sizes": "512x512", "type": "image/png" }
+                { "src": baseUrl + "icon.png", "sizes": "192x192", "type": "image/png" },
+                { "src": baseUrl + "icon.png", "sizes": "512x512", "type": "image/png" }
             ]
         };
         const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
@@ -75,7 +78,6 @@
 
         const WORKOUT_COLORS = ['#F28C42', '#FF5C8D', '#9B5CFF', '#42D4F2', '#5CFF87', '#FFD65C'];
         
-        // Independent Storage Keys
         const STORAGE_KEY = '@stackr_workouts_v1';
         const SETTINGS_STORAGE_KEY = '@stackr_recovery_settings_v1';
         const SETTINGS_ENABLED_KEY = '@stackr_recovery_enabled_v1';
@@ -93,7 +95,6 @@
             { id: 'w2', title: "Pull Day", color: '#42D4F2', exercises: [{ id: 'e5', name: 'Deadlift', weight: '140', reps: '5', minReps: 5, maxReps: 8, isExpanded: false }] }
         ];
 
-        // Recovery Logic
         const getRecoveryColor = (lastCompleted, cooldownDays = 8) => {
             if (!lastCompleted) return COLORS.background;
             
@@ -126,7 +127,6 @@
             if (navigator.vibrate) navigator.vibrate(pattern);
         };
 
-        // Custom iOS-style Switch for Web
         const ToggleSwitch = ({ checked, onChange, activeColor }) => (
             <div 
                 onClick={() => { vibrate(5); onChange(!checked); }}
@@ -266,13 +266,11 @@
 
             const currentBgColor = isCooldownEnabled ? getRecoveryColor(activeWorkout.lastCompleted, cooldownDays) : COLORS.background;
 
-            // Apply background color to body for smooth transitions across the whole page
             useEffect(() => {
                 document.body.style.backgroundColor = currentBgColor;
                 document.querySelector('meta[name="theme-color"]').setAttribute("content", currentBgColor);
             }, [currentBgColor]);
 
-            // Load Boot Data
             useEffect(() => {
                 try {
                     const savedWorkouts = localStorage.getItem(STORAGE_KEY);
@@ -288,7 +286,6 @@
                 setIsLoaded(true);
             }, []);
 
-            // Auto-Save Workouts
             useEffect(() => {
                 if (isLoaded) {
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(workouts));
