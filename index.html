@@ -12,7 +12,6 @@
 
     <link rel="icon" type="image/png" href="./icon.png">
     <link rel="apple-touch-icon" href="./icon.png">
-    
     <link rel="manifest" id="my-manifest">
 
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -22,15 +21,26 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     
     <style>
-        body { background-color: #0F1333; color: white; -webkit-tap-highlight-color: transparent; user-select: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        body { 
+            background-color: #0F1333; 
+            color: white; 
+            -webkit-tap-highlight-color: transparent; 
+            user-select: none; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            transition: background-color 0.5s ease;
+        }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        
-        .fade-enter { opacity: 0; transform: translateY(20px); }
-        .fade-enter-active { opacity: 1; transform: translateY(0); transition: opacity 300ms, transform 300ms; }
-        .fade-exit { opacity: 1; }
-        .fade-exit-active { opacity: 0; transition: opacity 300ms; }
         input:focus { outline: none; }
+        
+        /* Custom animations */
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        
+        .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .animate-slide-down { animation: slideDown 0.2s ease-out forwards; }
+        .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
     </style>
 </head>
 <body>
@@ -46,16 +56,8 @@
             "theme_color": "#0F1333",
             "orientation": "portrait",
             "icons": [
-                {
-                    "src": "./icon.png",
-                    "sizes": "192x192",
-                    "type": "image/png"
-                },
-                {
-                    "src": "./icon.png",
-                    "sizes": "512x512",
-                    "type": "image/png"
-                }
+                { "src": "./icon.png", "sizes": "192x192", "type": "image/png" },
+                { "src": "./icon.png", "sizes": "512x512", "type": "image/png" }
             ]
         };
         const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
@@ -63,7 +65,7 @@
     </script>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useRef } = React;
+        const { useState, useEffect, useRef } = React;
         
         const COLORS = {
             background: '#0F1333', cardBgLeft: '#E6E6E6', cardBgRight: '#D1D1D1',
@@ -72,7 +74,11 @@
         };
 
         const WORKOUT_COLORS = ['#F28C42', '#FF5C8D', '#9B5CFF', '#42D4F2', '#5CFF87', '#FFD65C'];
+        
+        // Independent Storage Keys
         const STORAGE_KEY = '@stackr_workouts_v1';
+        const SETTINGS_STORAGE_KEY = '@stackr_recovery_settings_v1';
+        const SETTINGS_ENABLED_KEY = '@stackr_recovery_enabled_v1';
         
         const SCREEN_WIDTH = Math.min(window.innerWidth, 500);
         const CARD_MARGIN = 20;
@@ -87,24 +93,56 @@
             { id: 'w2', title: "Pull Day", color: '#42D4F2', exercises: [{ id: 'e5', name: 'Deadlift', weight: '140', reps: '5', minReps: 5, maxReps: 8, isExpanded: false }] }
         ];
 
-        const Icon = ({ name, size = 24, color = "currentColor", ...props }) => {
-            useEffect(() => { if(window.lucide) window.lucide.createIcons(); }, [name]);
-            return <i data-lucide={name} style={{ width: size, height: size, color: color }} {...props}></i>;
+        // Recovery Logic
+        const getRecoveryColor = (lastCompleted, cooldownDays = 8) => {
+            if (!lastCompleted) return COLORS.background;
+            
+            const now = Date.now();
+            const diffMs = now - lastCompleted;
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+            if (diffDays >= cooldownDays) return COLORS.background;
+            if (cooldownDays <= 2) return diffDays === 0 ? '#FF4444' : '#2ECC71';
+
+            const greenStep = Math.floor(cooldownDays * 0.75);
+            const yellowStep = Math.floor(cooldownDays * 0.375);
+
+            if (diffDays >= greenStep) return '#2ECC71'; 
+            if (diffDays >= yellowStep) return '#FFD700'; 
+            return '#FF4444'; 
+        };
+
+        const Icon = ({ name, size = 24, color = "currentColor", className = "", ...props }) => {
+            const iconRef = useRef(null);
+            useEffect(() => { 
+                if(window.lucide && iconRef.current) {
+                    window.lucide.createIcons({ root: iconRef.current.parentElement }); 
+                }
+            }, [name]);
+            return <i ref={iconRef} data-lucide={name} style={{ width: size, height: size, color: color }} className={className} {...props}></i>;
         };
 
         const vibrate = (pattern = 10) => {
             if (navigator.vibrate) navigator.vibrate(pattern);
         };
 
+        // Custom iOS-style Switch for Web
+        const ToggleSwitch = ({ checked, onChange, activeColor }) => (
+            <div 
+                onClick={() => { vibrate(5); onChange(!checked); }}
+                className={`w-14 h-8 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300`}
+                style={{ backgroundColor: checked ? activeColor : '#3E436B' }}
+            >
+                <div className={`bg-white w-6 h-6 rounded-full shadow-md transform transition-transform duration-300 ${checked ? 'translate-x-6' : ''}`} />
+            </div>
+        );
+
         const useLongPress = (callback = () => {}, ms = 500) => {
             const [startLongPress, setStartLongPress] = useState(false);
             useEffect(() => {
                 let timerId;
                 if (startLongPress) {
-                    timerId = setTimeout(() => {
-                        vibrate(50);
-                        callback();
-                    }, ms);
+                    timerId = setTimeout(() => { vibrate(50); callback(); }, ms);
                 } else {
                     clearTimeout(timerId);
                 }
@@ -122,26 +160,20 @@
 
         const RepRangeSelector = ({ min, max, onRangeChange, color }) => {
             const numbers = [4, 5, 6, 7, 8, 9, 10, 11, 12];
-            const numCount = numbers.length;
-            const stepWidthPct = 100 / numCount; 
-            const startIndex = min - 4;
-            const endIndex = max - 4;
-            const barLeftPosPct = (startIndex * stepWidthPct) + (stepWidthPct / 2);
-            const barRightPosPct = 100 - ((endIndex * stepWidthPct) + (stepWidthPct / 2));
+            const stepWidthPct = 100 / numbers.length; 
+            const barLeftPosPct = ((min - 4) * stepWidthPct) + (stepWidthPct / 2);
+            const barRightPosPct = 100 - (((max - 4) * stepWidthPct) + (stepWidthPct / 2));
 
             const handlePress = (num) => {
                 vibrate(10);
-                if (min !== max) { onRangeChange(num, num); } 
+                if (min !== max) onRangeChange(num, num); 
                 else { if (num < min) onRangeChange(num, max); else onRangeChange(min, num); }
             };
 
             return (
                 <div className="relative h-[50px] w-full bg-[#E0E0E0] rounded-[30px] flex items-center justify-center overflow-hidden">
                     {min !== max && (
-                        <div style={{
-                            position: 'absolute', height: '20px', backgroundColor: color, opacity: 0.5,
-                            left: `${barLeftPosPct}%`, right: `${barRightPosPct}%`, zIndex: 0
-                        }}></div>
+                        <div style={{ position: 'absolute', height: '20px', backgroundColor: color, opacity: 0.5, left: `${barLeftPosPct}%`, right: `${barRightPosPct}%`, zIndex: 0 }}></div>
                     )}
                     <div className="flex w-full h-full z-10">
                         {numbers.map((num) => {
@@ -152,15 +184,9 @@
                             return (
                                 <div key={num} onClick={() => handlePress(num)} className="flex-1 h-full flex items-center justify-center relative cursor-pointer">
                                     {(isMin || isMax) && (
-                                        <div style={{
-                                            position: 'absolute', width: '40px', height: '40px', backgroundColor: color, borderRadius: '50%', zIndex: -1
-                                        }}></div>
+                                        <div style={{ position: 'absolute', width: '40px', height: '40px', backgroundColor: color, borderRadius: '50%', zIndex: -1 }}></div>
                                     )}
-                                    <span style={{ 
-                                        color: (isMin || isMax) ? '#FFF' : (isInRange ? '#111534' : '#888'), 
-                                        fontWeight: isActive ? 'bold' : 'normal',
-                                        fontSize: '16px'
-                                    }}>{num}</span>
+                                    <span style={{ color: (isMin || isMax) ? '#FFF' : (isInRange ? '#111534' : '#888'), fontWeight: isActive ? 'bold' : 'normal', fontSize: '16px' }}>{num}</span>
                                 </div>
                             );
                         })}
@@ -169,7 +195,7 @@
             );
         };
 
-        const ExerciseCard = ({ data, activeColor, onEdit, onToggle, onUpdateStats }) => {
+        const ExerciseCard = ({ data, activeWorkout, currentBgColor, onEdit, onToggle, onUpdateStats }) => {
             const longPressProps = useLongPress(() => onEdit(data));
             const topSplitX = CARD_WIDTH * SPLIT_PCT;
             const bottomSplitX = topSplitX + SLANT; 
@@ -193,7 +219,8 @@
                             </div>
                         </div>
                     </div>
-                    <div className="absolute -top-[20px] -right-[6px] w-[55px] h-[55px] rounded-full flex items-center justify-center border-4 border-[#0F1333] z-20 shadow-sm" style={{ backgroundColor: activeColor }}>
+                    <div className="absolute -top-[20px] -right-[6px] w-[55px] h-[55px] rounded-full flex items-center justify-center border-4 z-20 shadow-sm transition-colors duration-500" 
+                         style={{ backgroundColor: activeWorkout.color, borderColor: currentBgColor }}>
                         <span className="text-white text-[20px] font-bold">{data.reps}</span>
                     </div>
                     {data.isExpanded && (
@@ -202,7 +229,7 @@
                                 <span className="text-white font-bold text-[16px]">1 Rep</span>
                                 <Icon name="plus" size={20} color="white" />
                             </button>
-                            <button onClick={() => onUpdateStats(data.id, 'weight', 2.5)} className="flex-1 py-3 px-4 rounded-[15px] flex justify-between items-center active:scale-95 transition-transform" style={{ backgroundColor: activeColor }}>
+                            <button onClick={() => onUpdateStats(data.id, 'weight', 2.5)} className="flex-1 py-3 px-4 rounded-[15px] flex justify-between items-center active:scale-95 transition-transform" style={{ backgroundColor: activeWorkout.color }}>
                                 <span className="text-[#111534] font-bold text-[16px]">2,5 Kg</span>
                                 <Icon name="plus" size={20} color="#111534" />
                             </button>
@@ -214,27 +241,54 @@
 
         const App = () => {
             const [workouts, setWorkouts] = useState(INITIAL_WORKOUTS);
+            const [cooldownDays, setCooldownDays] = useState(8); 
+            const [isCooldownEnabled, setIsCooldownEnabled] = useState(true);
+
             const [currentWorkoutIndex, setCurrentWorkoutIndex] = useState(0);
             const [isLoaded, setIsLoaded] = useState(false);
             const [showToast, setShowToast] = useState(false);
+            
             const [modalVisible, setModalVisible] = useState(false);
             const [modalMode, setModalMode] = useState('exercise'); 
             const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+            
             const [newExercise, setNewExercise] = useState({ name: '', weight: '', reps: '', minReps: 8, maxReps: 12 });
             const [workoutTitle, setWorkoutTitle] = useState('');
             const [workoutColor, setWorkoutColor] = useState(WORKOUT_COLORS[0]);
             const [editingId, setEditingId] = useState(null);
+            
+            const [tempCooldownInput, setTempCooldownInput] = useState('8');
+            const [tempCooldownEnabled, setTempCooldownEnabled] = useState(true);
 
             const activeWorkout = workouts[currentWorkoutIndex] || workouts[0];
             const isLastWorkout = currentWorkoutIndex === workouts.length - 1;
             const isFirstWorkout = currentWorkoutIndex === 0;
 
+            const currentBgColor = isCooldownEnabled ? getRecoveryColor(activeWorkout.lastCompleted, cooldownDays) : COLORS.background;
+
+            // Apply background color to body for smooth transitions across the whole page
             useEffect(() => {
-                const saved = localStorage.getItem(STORAGE_KEY);
-                if (saved) setWorkouts(JSON.parse(saved));
+                document.body.style.backgroundColor = currentBgColor;
+                document.querySelector('meta[name="theme-color"]').setAttribute("content", currentBgColor);
+            }, [currentBgColor]);
+
+            // Load Boot Data
+            useEffect(() => {
+                try {
+                    const savedWorkouts = localStorage.getItem(STORAGE_KEY);
+                    const savedDays = localStorage.getItem(SETTINGS_STORAGE_KEY);
+                    const savedEnabled = localStorage.getItem(SETTINGS_ENABLED_KEY);
+
+                    if (savedWorkouts) setWorkouts(JSON.parse(savedWorkouts));
+                    if (savedDays) setCooldownDays(parseInt(savedDays, 10) || 8);
+                    if (savedEnabled) setIsCooldownEnabled(savedEnabled === 'true');
+                } catch(e) {
+                    console.error("Local storage error on boot", e);
+                }
                 setIsLoaded(true);
             }, []);
 
+            // Auto-Save Workouts
             useEffect(() => {
                 if (isLoaded) {
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(workouts));
@@ -243,6 +297,13 @@
                     return () => clearTimeout(timer);
                 }
             }, [workouts, isLoaded]);
+
+            const persistSettings = (days, enabled) => {
+                localStorage.setItem(SETTINGS_STORAGE_KEY, days.toString());
+                localStorage.setItem(SETTINGS_ENABLED_KEY, enabled ? 'true' : 'false');
+                setCooldownDays(days);
+                setIsCooldownEnabled(enabled);
+            };
 
             const handleNav = (dir) => {
                 vibrate(10);
@@ -272,9 +333,37 @@
                 setModalMode('edit-workout'); setWorkoutTitle(activeWorkout.title); setWorkoutColor(activeWorkout.color); setShowDeleteConfirm(false); setModalVisible(true);
             });
 
+            const openSettingsModal = () => {
+                vibrate(10);
+                setTempCooldownInput(cooldownDays.toString());
+                setTempCooldownEnabled(isCooldownEnabled);
+                setModalMode('settings');
+                setWorkoutColor(activeWorkout.color);
+                setShowDeleteConfirm(false);
+                setModalVisible(true);
+            };
+
+            const markWorkoutComplete = () => {
+                if(window.confirm(`Mark this workout completed? This restarts your ${cooldownDays}-day recovery indicator.`)) {
+                    vibrate([20, 50, 20]);
+                    const updated = [...workouts];
+                    updated[currentWorkoutIndex].lastCompleted = Date.now();
+                    setWorkouts(updated);
+                }
+            };
+
             const handleSave = () => {
+                if (modalMode === 'settings') {
+                    let parsedDays = parseInt(tempCooldownInput.trim(), 10);
+                    if (isNaN(parsedDays) || parsedDays < 1) parsedDays = cooldownDays;
+                    persistSettings(parsedDays, tempCooldownEnabled);
+                    setModalVisible(false);
+                    return;
+                }
+
                 const updated = [...workouts];
                 const current = updated[currentWorkoutIndex];
+                
                 if (modalMode === 'create-workout') {
                     if (!workoutTitle.trim()) return;
                     const newW = { id: Math.random().toString(), title: workoutTitle, color: workoutColor, exercises: [] };
@@ -327,10 +416,19 @@
                 } : w));
             };
 
+            const isYellowBg = currentBgColor === '#FFD700';
+
             return (
                 <div className="flex flex-col h-screen max-w-[500px] mx-auto relative overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-8 pt-10">
-                        <button onClick={() => handleNav(-1)} className="w-10 h-10 rounded-full flex items-center justify-center transition-opacity active:opacity-50" style={{ opacity: isFirstWorkout ? 0 : 1, backgroundColor: activeWorkout.color }}>
+                    
+                    <div className="flex justify-end px-[25px] pt-[15px] -mb-[15px] z-10">
+                        <button onClick={openSettingsModal} className="p-1 active:opacity-50 transition-opacity">
+                            <Icon name="settings" size={24} color={isYellowBg ? COLORS.textDark : COLORS.textLight} />
+                        </button>
+                    </div>
+
+                    <div className="flex items-center justify-between px-5 py-8 pt-10 relative z-0">
+                        <button onClick={() => handleNav(-1)} className="w-10 h-10 rounded-full flex items-center justify-center transition-opacity active:opacity-50" style={{ opacity: isFirstWorkout ? 0 : 1, backgroundColor: activeWorkout.color }} disabled={isFirstWorkout}>
                             <Icon name="chevron-left" size={20} color="white" className="mr-0.5" />
                         </button>
                         <div {...headerLongPress} className="py-3 px-8 rounded-full min-w-[180px] flex items-center justify-center cursor-pointer select-none active:scale-95 transition-transform shadow-md" style={{ backgroundColor: activeWorkout.color }}>
@@ -343,53 +441,74 @@
 
                     <div className="flex-1 overflow-y-auto pb-32 pt-5 no-scrollbar px-5">
                         {activeWorkout.exercises.map(ex => (
-                            <ExerciseCard key={ex.id} data={ex} activeColor={activeWorkout.color} onEdit={openEditModal} onToggle={toggleExpand} onUpdateStats={updateStats} />
+                            <ExerciseCard key={ex.id} data={ex} activeWorkout={activeWorkout} currentBgColor={currentBgColor} onEdit={openEditModal} onToggle={toggleExpand} onUpdateStats={updateStats} />
                         ))}
                         {activeWorkout.exercises.length === 0 && (
-                            <div className="text-gray-500 text-center mt-20 italic">No exercises yet. Tap + to add one.</div>
+                            <div className="text-gray-500 text-center mt-20 italic">No exercises yet.</div>
                         )}
                     </div>
 
-                    <div className={`absolute bottom-32 left-1/2 transform -translate-x-1/2 bg-white/20 px-5 py-2 rounded-full backdrop-blur-sm pointer-events-none transition-opacity duration-500 ${showToast ? 'opacity-100' : 'opacity-0'}`}>
+                    <div className={`absolute bottom-[130px] left-1/2 transform -translate-x-1/2 bg-black/60 px-5 py-2 rounded-full backdrop-blur-sm pointer-events-none transition-opacity duration-500 z-40 ${showToast ? 'opacity-100' : 'opacity-0'}`}>
                         <span className="text-white font-bold">Saved</span>
                     </div>
+
+                    {isCooldownEnabled && (
+                        <button onClick={markWorkoutComplete} className="absolute left-6 bottom-10 w-[70px] h-[70px] rounded-full flex items-center justify-center shadow-xl active:scale-90 transition-transform z-30" style={{ backgroundColor: activeWorkout.color }}>
+                            <Icon name="check-check" size={32} color="white" />
+                        </button>
+                    )}
 
                     <button onClick={openAddModal} className="absolute right-6 bottom-10 w-[70px] h-[70px] rounded-full flex items-center justify-center shadow-xl active:scale-90 transition-transform z-30" style={{ backgroundColor: activeWorkout.color }}>
                         <Icon name="plus" size={40} color="white" />
                     </button>
 
                     {modalVisible && (
-                        <div className="fixed inset-0 bg-black/80 z-50 flex items-end justify-center animate-fade-in">
-                            <div className="w-full max-w-[500px] bg-[#0F1333] rounded-t-[30px] p-[30px] pb-12 animate-slide-up border-t border-white/10">
+                        <div className="fixed inset-0 bg-black/80 z-50 flex items-end justify-center animate-fade-in px-2 sm:px-0">
+                            <div className="w-full max-w-[500px] rounded-t-[30px] p-[30px] pb-12 animate-slide-up border-t border-white/10" style={{ backgroundColor: currentBgColor }}>
                                 {showDeleteConfirm ? (
                                     <div className="flex flex-col items-center py-4">
                                         <Icon name="alert-triangle" size={50} color="#FF4444" className="mb-4" />
                                         <h2 className="text-white text-2xl font-bold mb-2">Are you sure?</h2>
-                                        <p className="text-gray-400 mb-8">This will permanently remove it.</p>
+                                        <p className="text-gray-300 mb-8">This will permanently remove it.</p>
                                         <div className="flex gap-4 w-full">
-                                            <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 p-4 rounded-xl border border-white font-bold text-white">Cancel</button>
-                                            <button onClick={performDelete} className="flex-1 p-4 rounded-xl bg-[#FF4444] font-bold text-white">Delete</button>
+                                            <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 p-4 rounded-xl border border-white font-bold text-white active:bg-white/10">Cancel</button>
+                                            <button onClick={performDelete} className="flex-1 p-4 rounded-xl bg-[#FF4444] font-bold text-white active:opacity-80">Delete</button>
                                         </div>
                                     </div>
                                 ) : (
                                     <>
                                         <div className="flex justify-between items-center mb-6">
-                                            {(editingId || modalMode === 'edit-workout') ? (
-                                                <button onClick={() => setShowDeleteConfirm(true)}><Icon name="trash-2" color="#FF4444" /></button>
-                                            ) : <div className="w-6"></div>}
-                                            <h2 className="text-white text-[22px] font-bold">
-                                                {modalMode === 'create-workout' ? 'New Workout' : modalMode === 'edit-workout' ? 'Rename Workout' : editingId ? 'Edit Exercise' : 'Add Exercise'}
+                                            {(editingId && modalMode === 'exercise' || modalMode === 'edit-workout') ? (
+                                                <button onClick={() => setShowDeleteConfirm(true)} className="p-1"><Icon name="trash-2" color="#FF4444" /></button>
+                                            ) : <div className="w-8"></div>}
+                                            <h2 className={`text-[22px] font-bold ${isYellowBg && modalMode !== 'exercise' && modalMode !== 'edit-workout' ? 'text-[#111534]' : 'text-white'}`}>
+                                                {modalMode === 'settings' ? 'Recovery Settings' : modalMode === 'create-workout' ? 'New Workout' : modalMode === 'edit-workout' ? 'Rename Workout' : editingId ? 'Edit Exercise' : 'Add Exercise'}
                                             </h2>
-                                            <div className="w-6"></div>
+                                            <div className="w-8"></div>
                                         </div>
-                                        {(modalMode === 'create-workout' || modalMode === 'edit-workout') ? (
+
+                                        {modalMode === 'settings' ? (
+                                            <>
+                                                <div className="flex justify-between items-center bg-[#2A2E4D] px-4 py-3 rounded-xl mb-3">
+                                                    <span className="text-white text-[16px] font-medium">Recovery Color Coding</span>
+                                                    <ToggleSwitch checked={tempCooldownEnabled} onChange={setTempCooldownEnabled} activeColor={activeWorkout.color} />
+                                                </div>
+                                                {tempCooldownEnabled && (
+                                                    <>
+                                                        <div className={`text-sm font-bold mt-4 mb-2 ${isYellowBg ? 'text-gray-700' : 'text-gray-400'}`}>Full Cycle Duration (Days)</div>
+                                                        <input className="w-full bg-[#2A2E4D] text-white p-4 rounded-xl mb-2 text-lg" type="number" placeholder="8" value={tempCooldownInput} onChange={e => setTempCooldownInput(e.target.value)} />
+                                                        <p className="text-gray-300 text-sm text-center mb-4 leading-snug">The days it takes a completed workout to go Red → Yellow → Green → Default Blue.</p>
+                                                    </>
+                                                )}
+                                            </>
+                                        ) : (modalMode === 'create-workout' || modalMode === 'edit-workout') ? (
                                             <>
                                                 <input className="w-full bg-[#2A2E4D] text-white p-4 rounded-xl mb-4 text-lg" placeholder="Workout Name" value={workoutTitle} onChange={e => setWorkoutTitle(e.target.value)} autoFocus />
                                                 <div className="mb-6">
-                                                    <div className="text-gray-400 text-sm font-bold mb-2">Theme Color</div>
+                                                    <div className={`text-sm font-bold mb-2 ${isYellowBg ? 'text-gray-700' : 'text-gray-400'}`}>Theme Color</div>
                                                     <div className="flex justify-between">
                                                         {WORKOUT_COLORS.map(c => (
-                                                            <button key={c} onClick={() => setWorkoutColor(c)} className={`w-10 h-10 rounded-full transition-transform ${workoutColor === c ? 'scale-110 border-2 border-white' : ''}`} style={{ backgroundColor: c }} />
+                                                            <button key={c} onClick={() => { vibrate(10); setWorkoutColor(c); }} className={`w-10 h-10 rounded-full transition-transform ${workoutColor === c ? 'scale-110 border-2 border-white' : ''}`} style={{ backgroundColor: c }} />
                                                         ))}
                                                     </div>
                                                 </div>
@@ -401,12 +520,12 @@
                                                     <input className="flex-1 bg-[#2A2E4D] text-white p-4 rounded-xl text-lg" type="number" placeholder="Weight" value={newExercise.weight} onChange={e => setNewExercise({...newExercise, weight: e.target.value})} />
                                                     <input className="flex-1 bg-[#2A2E4D] text-white p-4 rounded-xl text-lg" type="number" placeholder="Reps" value={newExercise.reps} onChange={e => setNewExercise({...newExercise, reps: e.target.value})} />
                                                 </div>
-                                                <div className="text-gray-400 text-sm font-bold mb-2">Target Range: {newExercise.minReps} - {newExercise.maxReps}</div>
+                                                <div className={`text-sm font-bold mb-2 ${isYellowBg ? 'text-gray-700' : 'text-gray-400'}`}>Target Range: {newExercise.minReps} - {newExercise.maxReps}</div>
                                                 <RepRangeSelector min={newExercise.minReps} max={newExercise.maxReps} color={workoutColor} onRangeChange={(min, max) => setNewExercise({ ...newExercise, minReps: min, maxReps: max })} />
                                             </>
                                         )}
                                         <div className="flex gap-4 mt-8">
-                                            <button onClick={() => setModalVisible(false)} className="flex-1 p-4 rounded-xl border font-bold" style={{ borderColor: workoutColor, color: workoutColor }}>Cancel</button>
+                                            <button onClick={() => setModalVisible(false)} className="flex-1 p-4 rounded-xl border-2 font-bold" style={{ borderColor: workoutColor, color: workoutColor }}>Cancel</button>
                                             <button onClick={handleSave} className="flex-1 p-4 rounded-xl font-bold text-[#111534]" style={{ backgroundColor: workoutColor }}>Save</button>
                                         </div>
                                     </>
