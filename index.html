@@ -45,25 +45,30 @@
     <div id="root"></div>
 
     <script>
-        const baseUrl = new URL('.', window.location.href).href;
-        const manifest = {
-            "name": "Stackr",
-            "short_name": "Stackr",
-            "start_url": baseUrl,
-            "display": "standalone",
-            "background_color": "#0F1333",
-            "theme_color": "#0F1333",
-            "orientation": "portrait",
-            "icons": [
-                { "src": baseUrl + "icon.png", "sizes": "192x192", "type": "image/png" },
-                { "src": baseUrl + "icon.png", "sizes": "512x512", "type": "image/png" }
-            ]
-        };
-        const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
-        document.getElementById('my-manifest').setAttribute('href', URL.createObjectURL(blob));
+        window.addEventListener('DOMContentLoaded', () => {
+            const baseUrl = new URL('.', window.location.href).href;
+            const manifest = {
+                "name": "Stackr",
+                "short_name": "Stackr",
+                "start_url": baseUrl,
+                "display": "standalone",
+                "background_color": "#0F1333",
+                "theme_color": "#0F1333",
+                "orientation": "portrait",
+                "icons": [
+                    { "src": baseUrl + "icon.png", "sizes": "192x192", "type": "image/png" },
+                    { "src": baseUrl + "icon.png", "sizes": "512x512", "type": "image/png" }
+                ]
+            };
+            const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+            const manifestLink = document.getElementById('my-manifest');
+            if (manifestLink) {
+                manifestLink.setAttribute('href', URL.createObjectURL(blob));
+            }
+        });
     </script>
 
-    <script type="text/babel">
+    <script type="text/babel" data-presets="react">
         const { useState, useEffect, useRef } = React;
         
         const COLORS = {
@@ -269,7 +274,8 @@
 
             useEffect(() => {
                 document.body.style.backgroundColor = currentBgColor;
-                document.querySelector('meta[name="theme-color"]').setAttribute("content", currentBgColor);
+                const metaTheme = document.querySelector('meta[name="theme-color"]');
+                if (metaTheme) metaTheme.setAttribute("content", currentBgColor);
             }, [currentBgColor]);
 
             useEffect(() => {
